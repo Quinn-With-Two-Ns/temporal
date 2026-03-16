@@ -6929,3 +6929,56 @@ func (wh *WorkflowHandler) UnpauseWorkflowExecution(ctx context.Context, request
 
 	return &workflowservice.UnpauseWorkflowExecutionResponse{}, nil
 }
+
+func (wh *WorkflowHandler) GetWorkflowExecutionResult(
+	ctx context.Context,
+	request *workflowservice.GetWorkflowExecutionResultRequest,
+) (_ *workflowservice.GetWorkflowExecutionResultResponse, retError error) {
+	defer log.CapturePanic(wh.logger, &retError)
+
+	if request == nil {
+		return nil, errRequestNotSet
+	}
+
+	if !wh.config.EnableGetWorkflowExecutionResult(request.GetNamespace()) {
+		return nil, errGetWorkflowExecutionResultAPINotAllowed
+	}
+
+	if err := validateExecution(request.GetExecution()); err != nil {
+		return nil, err
+	}
+
+	namespaceName := namespace.Name(request.GetNamespace())
+	namespaceID, err := wh.namespaceRegistry.GetNamespaceID(namespaceName)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := validateRequestId(&request.RequestId, wh.config.MaxIDLengthLimit()); err != nil {
+		return nil, err
+	}
+
+	if err := wh.validateWorkflowCompletionCallbacks(namespaceName, request.GetCallbacks()); err != nil {
+		return nil, err
+	}
+
+	request.Links = dedupLinksFromCallbacks(request.GetLinks(), request.GetCallbacks())
+
+	allLinks := make([]*commonpb.Link, 0, len(request.GetLinks())+len(request.GetCallbacks()))
+	allLinks = append(allLinks, request.GetLinks()...)
+	for _, cb := range request.GetCallbacks() {
+		allLinks = append(allLinks, cb.GetLinks()...)
+	}
+	if err := wh.validateLinks(namespaceName, allLinks); err != nil {
+		return nil, err
+	}
+
+	resp, err := wh.historyClient.GetWorkflowExecutionResult(ctx, &historyservice.GetWorkflowExecutionResultRequest{
+		NamespaceId: namespaceID.String(),
+		Request:     request,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return resp.GetResponse(), nil
+}

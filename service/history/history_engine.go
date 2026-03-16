@@ -41,6 +41,7 @@ import (
 	"go.temporal.io/server/service/history/api/deleteworkflow"
 	"go.temporal.io/server/service/history/api/describemutablestate"
 	"go.temporal.io/server/service/history/api/describeworkflow"
+	"go.temporal.io/server/service/history/api/getworkflowexecutionresult"
 	"go.temporal.io/server/service/history/api/getworkflowexecutionhistory"
 	"go.temporal.io/server/service/history/api/getworkflowexecutionhistoryreverse"
 	"go.temporal.io/server/service/history/api/getworkflowexecutionrawhistory"
@@ -530,6 +531,15 @@ func (e *historyEngineImpl) DescribeWorkflowExecution(
 		e.persistenceVisibilityMgr,
 		e.outboundQueueCBPool,
 	)
+}
+
+// GetWorkflowExecutionResult returns the result of a workflow execution if completed,
+// or the current status if still running. Optionally registers callbacks.
+func (e *historyEngineImpl) GetWorkflowExecutionResult(
+	ctx context.Context,
+	request *historyservice.GetWorkflowExecutionResultRequest,
+) (_ *historyservice.GetWorkflowExecutionResultResponse, retError error) {
+	return getworkflowexecutionresult.Invoke(ctx, request, e.shardContext, e.workflowConsistencyChecker)
 }
 
 func (e *historyEngineImpl) RecordActivityTaskStarted(

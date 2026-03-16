@@ -482,6 +482,26 @@ func (mr *MockWorkflowServiceClientMockRecorder) DescribeWorkflowExecution(ctx, 
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DescribeWorkflowExecution", reflect.TypeOf((*MockWorkflowServiceClient)(nil).DescribeWorkflowExecution), varargs...)
 }
 
+// GetWorkflowExecutionResult mocks base method.
+func (m *MockWorkflowServiceClient) GetWorkflowExecutionResult(ctx context.Context, in *workflowservice.GetWorkflowExecutionResultRequest, opts ...grpc.CallOption) (*workflowservice.GetWorkflowExecutionResultResponse, error) {
+	m.ctrl.T.Helper()
+	varargs := []any{ctx, in}
+	for _, a := range opts {
+		varargs = append(varargs, a)
+	}
+	ret := m.ctrl.Call(m, "GetWorkflowExecutionResult", varargs...)
+	ret0, _ := ret[0].(*workflowservice.GetWorkflowExecutionResultResponse)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetWorkflowExecutionResult indicates an expected call of GetWorkflowExecutionResult.
+func (mr *MockWorkflowServiceClientMockRecorder) GetWorkflowExecutionResult(ctx, in any, opts ...any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	varargs := append([]any{ctx, in}, opts...)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetWorkflowExecutionResult", reflect.TypeOf((*MockWorkflowServiceClient)(nil).GetWorkflowExecutionResult), varargs...)
+}
+
 // DescribeWorkflowRule mocks base method.
 func (m *MockWorkflowServiceClient) DescribeWorkflowRule(ctx context.Context, in *workflowservice.DescribeWorkflowRuleRequest, opts ...grpc.CallOption) (*workflowservice.DescribeWorkflowRuleResponse, error) {
 	m.ctrl.T.Helper()

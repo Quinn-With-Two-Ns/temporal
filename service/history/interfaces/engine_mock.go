@@ -144,6 +144,21 @@ func (mr *MockEngineMockRecorder) DescribeWorkflowExecution(ctx, request any) *g
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DescribeWorkflowExecution", reflect.TypeOf((*MockEngine)(nil).DescribeWorkflowExecution), ctx, request)
 }
 
+// GetWorkflowExecutionResult mocks base method.
+func (m *MockEngine) GetWorkflowExecutionResult(ctx context.Context, request *historyservice.GetWorkflowExecutionResultRequest) (*historyservice.GetWorkflowExecutionResultResponse, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetWorkflowExecutionResult", ctx, request)
+	ret0, _ := ret[0].(*historyservice.GetWorkflowExecutionResultResponse)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetWorkflowExecutionResult indicates an expected call of GetWorkflowExecutionResult.
+func (mr *MockEngineMockRecorder) GetWorkflowExecutionResult(ctx, request any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetWorkflowExecutionResult", reflect.TypeOf((*MockEngine)(nil).GetWorkflowExecutionResult), ctx, request)
+}
+
 // ExecuteMultiOperation mocks base method.
 func (m *MockEngine) ExecuteMultiOperation(ctx context.Context, request *historyservice.ExecuteMultiOperationRequest) (*historyservice.ExecuteMultiOperationResponse, error) {
 	m.ctrl.T.Helper()

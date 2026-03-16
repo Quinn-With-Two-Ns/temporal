@@ -6,6 +6,7 @@
 .vscode/settings.json
 .vscode
 *.code-workspace
+/.omc
 .DS_Store
 .coverage
 .testoutput

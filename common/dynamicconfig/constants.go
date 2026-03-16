@@ -1022,6 +1022,12 @@ so forwarding by endpoint ID will not work out of the box.`,
 to allow waiting on the "Accepted" lifecycle stage.`,
 	)
 
+	FrontendEnableGetWorkflowExecutionResult = NewNamespaceBoolSetting(
+		"frontend.enableGetWorkflowExecutionResult",
+		false,
+		`FrontendEnableGetWorkflowExecutionResult enables GetWorkflowExecutionResult API in the frontend.`,
+	)
+
 	FrontendEnableWorkerVersioningDataAPIs = NewNamespaceBoolSetting(
 		"frontend.workerVersioningDataAPIs",
 		false,

@@ -4234,3 +4234,84 @@ func (s *WorkflowHandlerSuite) TestUpdateActivityOptions_Priority() {
 	s.ErrorContains(err, "priority key can't be negative")
 	// NOTE: only testing a single validation scenario here; the priority validation has its own unit tests
 }
+
+func (s *WorkflowHandlerSuite) TestGetWorkflowExecutionResult_FeatureFlagDisabled() {
+	config := s.newConfig()
+	config.EnableGetWorkflowExecutionResult = dc.GetBoolPropertyFnFilteredByNamespace(false)
+	wh := s.getWorkflowHandler(config)
+
+	s.mockNamespaceCache.EXPECT().GetNamespaceID(gomock.Any()).Return(namespace.ID(s.testNamespaceID), nil).AnyTimes()
+
+	req := &workflowservice.GetWorkflowExecutionResultRequest{
+		Namespace: s.testNamespace.String(),
+		Execution: &commonpb.WorkflowExecution{
+			WorkflowId: testWorkflowID,
+		},
+	}
+
+	_, err := wh.GetWorkflowExecutionResult(context.Background(), req)
+	s.Error(err)
+	s.Equal(errGetWorkflowExecutionResultAPINotAllowed, err)
+}
+
+func (s *WorkflowHandlerSuite) TestGetWorkflowExecutionResult_NilRequest() {
+	config := s.newConfig()
+	config.EnableGetWorkflowExecutionResult = dc.GetBoolPropertyFnFilteredByNamespace(true)
+	wh := s.getWorkflowHandler(config)
+
+	_, err := wh.GetWorkflowExecutionResult(context.Background(), nil)
+	s.Error(err)
+	s.Equal(errRequestNotSet, err)
+}
+
+func (s *WorkflowHandlerSuite) TestGetWorkflowExecutionResult_InvalidExecution() {
+	config := s.newConfig()
+	config.EnableGetWorkflowExecutionResult = dc.GetBoolPropertyFnFilteredByNamespace(true)
+	wh := s.getWorkflowHandler(config)
+
+	req := &workflowservice.GetWorkflowExecutionResultRequest{
+		Namespace: s.testNamespace.String(),
+		Execution: &commonpb.WorkflowExecution{
+			WorkflowId: "", // Empty workflow ID
+		},
+	}
+
+	_, err := wh.GetWorkflowExecutionResult(context.Background(), req)
+	s.Error(err)
+}
+
+func (s *WorkflowHandlerSuite) TestGetWorkflowExecutionResult_Success() {
+	config := s.newConfig()
+	config.EnableGetWorkflowExecutionResult = dc.GetBoolPropertyFnFilteredByNamespace(true)
+	wh := s.getWorkflowHandler(config)
+
+	s.mockNamespaceCache.EXPECT().GetNamespaceID(gomock.Any()).Return(namespace.ID(s.testNamespaceID), nil).AnyTimes()
+
+	expectedResp := &historyservice.GetWorkflowExecutionResultResponse{
+		Response: &workflowservice.GetWorkflowExecutionResultResponse{
+			Completion: &workflowservice.GetWorkflowExecutionResultResponse_Completed_{
+				Completed: &workflowservice.GetWorkflowExecutionResultResponse_Completed{
+					Execution: &commonpb.WorkflowExecution{
+						WorkflowId: testWorkflowID,
+						RunId:      testRunID,
+					},
+					Status: enumspb.WORKFLOW_EXECUTION_STATUS_COMPLETED,
+				},
+			},
+		},
+	}
+	s.mockHistoryClient.EXPECT().GetWorkflowExecutionResult(gomock.Any(), gomock.Any()).Return(expectedResp, nil)
+
+	req := &workflowservice.GetWorkflowExecutionResultRequest{
+		Namespace: s.testNamespace.String(),
+		Execution: &commonpb.WorkflowExecution{
+			WorkflowId: testWorkflowID,
+		},
+	}
+
+	resp, err := wh.GetWorkflowExecutionResult(context.Background(), req)
+	s.NoError(err)
+	s.NotNil(resp)
+	s.NotNil(resp.GetCompleted())
+	s.Equal(enumspb.WORKFLOW_EXECUTION_STATUS_COMPLETED, resp.GetCompleted().GetStatus())
+}
