@@ -15,19 +15,25 @@ var OperationContextKey = operationContextKeyType{}
 
 // OperationContext holds dependencies injected into the chasm.Context for use by Operation methods.
 type OperationContext struct {
-	MetricTagConfig dynamicconfig.TypedPropertyFn[NexusMetricTagConfig]
+	MetricTagConfig      dynamicconfig.TypedPropertyFn[NexusMetricTagConfig]
+	MaxLinksPerExecution dynamicconfig.IntPropertyFnWithNamespaceFilter
+	LinkMaxSize          dynamicconfig.IntPropertyFnWithNamespaceFilter
 }
 
 // componentOnlyLibrary registers just the components without task executors or gRPC handlers.
 // Used in the frontend to enable component ref serialization.
 type componentOnlyLibrary struct {
 	chasm.UnimplementedLibrary
-	metricTagConfig dynamicconfig.TypedPropertyFn[NexusMetricTagConfig]
+	metricTagConfig      dynamicconfig.TypedPropertyFn[NexusMetricTagConfig]
+	maxLinksPerExecution dynamicconfig.IntPropertyFnWithNamespaceFilter
+	linkMaxSize          dynamicconfig.IntPropertyFnWithNamespaceFilter
 }
 
 func newComponentOnlyLibrary(dc *dynamicconfig.Collection) *componentOnlyLibrary {
 	return &componentOnlyLibrary{
-		metricTagConfig: MetricTagConfiguration.Get(dc),
+		metricTagConfig:      MetricTagConfiguration.Get(dc),
+		maxLinksPerExecution: dynamicconfig.MaxLinksPerExecution.Get(dc),
+		linkMaxSize:          dynamicconfig.FrontendLinkMaxSize.Get(dc),
 	}
 }
 
@@ -49,7 +55,9 @@ func (l *componentOnlyLibrary) Components() []*chasm.RegistrableComponent {
 			chasm.WithBusinessIDAlias("OperationId"),
 			chasm.WithContextValues(map[any]any{
 				OperationContextKey: &OperationContext{
-					MetricTagConfig: l.metricTagConfig,
+					MetricTagConfig:      l.metricTagConfig,
+					MaxLinksPerExecution: l.maxLinksPerExecution,
+					LinkMaxSize:          l.linkMaxSize,
 				},
 			}),
 		),

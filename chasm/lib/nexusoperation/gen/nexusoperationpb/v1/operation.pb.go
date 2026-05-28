@@ -261,7 +261,12 @@ type OperationState struct {
 	OperationToken string `protobuf:"bytes,18,opt,name=operation_token,json=operationToken,proto3" json:"operation_token,omitempty"`
 	// Explicit terminate request state for standalone operations.
 	TerminateState *NexusOperationTerminateState `protobuf:"bytes,19,opt,name=terminate_state,json=terminateState,proto3" json:"terminate_state,omitempty"`
-	// Links are only populated for standalone operations. Workflow-backed operations derive links from history events.
+	// Deprecated: now stored on ChasmComponentAttributes.requests. Kept here as a
+	// dual-write target so a binary rolled back to pre-migration code (which only
+	// reads from this field) keeps showing links for operations created during
+	// the new-deploy window.
+	//
+	// Deprecated: Marked as deprecated in temporal/server/chasm/lib/nexusoperation/proto/v1/operation.proto.
 	Links         []*v11.Link `protobuf:"bytes,20,rep,name=links,proto3" json:"links,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -430,6 +435,7 @@ func (x *OperationState) GetTerminateState() *NexusOperationTerminateState {
 	return nil
 }
 
+// Deprecated: Marked as deprecated in temporal/server/chasm/lib/nexusoperation/proto/v1/operation.proto.
 func (x *OperationState) GetLinks() []*v11.Link {
 	if x != nil {
 		return x.Links
@@ -689,11 +695,17 @@ func (x *CancellationState) GetReason() string {
 }
 
 type OperationRequestData struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Input         *v11.Payload           `protobuf:"bytes,1,opt,name=input,proto3" json:"input,omitempty"`
-	NexusHeader   map[string]string      `protobuf:"bytes,2,rep,name=nexus_header,json=nexusHeader,proto3" json:"nexus_header,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	UserMetadata  *v12.UserMetadata      `protobuf:"bytes,3,opt,name=user_metadata,json=userMetadata,proto3" json:"user_metadata,omitempty"`
-	Identity      string                 `protobuf:"bytes,4,opt,name=identity,proto3" json:"identity,omitempty"`
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	Input       *v11.Payload           `protobuf:"bytes,1,opt,name=input,proto3" json:"input,omitempty"`
+	NexusHeader map[string]string      `protobuf:"bytes,2,rep,name=nexus_header,json=nexusHeader,proto3" json:"nexus_header,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// Deprecated: now stored on ChasmComponentAttributes.user_metadata. Kept here
+	// as a dual-write target so a binary rolled back to pre-migration code (which
+	// only reads from this field) keeps showing user metadata for operations
+	// created during the new-deploy window.
+	//
+	// Deprecated: Marked as deprecated in temporal/server/chasm/lib/nexusoperation/proto/v1/operation.proto.
+	UserMetadata  *v12.UserMetadata `protobuf:"bytes,3,opt,name=user_metadata,json=userMetadata,proto3" json:"user_metadata,omitempty"`
+	Identity      string            `protobuf:"bytes,4,opt,name=identity,proto3" json:"identity,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -742,6 +754,7 @@ func (x *OperationRequestData) GetNexusHeader() map[string]string {
 	return nil
 }
 
+// Deprecated: Marked as deprecated in temporal/server/chasm/lib/nexusoperation/proto/v1/operation.proto.
 func (x *OperationRequestData) GetUserMetadata() *v12.UserMetadata {
 	if x != nil {
 		return x.UserMetadata
@@ -848,7 +861,7 @@ var File_temporal_server_chasm_lib_nexusoperation_proto_v1_operation_proto proto
 
 const file_temporal_server_chasm_lib_nexusoperation_proto_v1_operation_proto_rawDesc = "" +
 	"\n" +
-	"Atemporal/server/chasm/lib/nexusoperation/proto/v1/operation.proto\x121temporal.server.chasm.lib.nexusoperation.proto.v1\x1a\x19google/protobuf/any.proto\x1a\x1egoogle/protobuf/duration.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a$temporal/api/common/v1/message.proto\x1a%temporal/api/failure/v1/message.proto\x1a'temporal/api/sdk/v1/user_metadata.proto\"\xe9\t\n" +
+	"Atemporal/server/chasm/lib/nexusoperation/proto/v1/operation.proto\x121temporal.server.chasm.lib.nexusoperation.proto.v1\x1a\x19google/protobuf/any.proto\x1a\x1egoogle/protobuf/duration.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a$temporal/api/common/v1/message.proto\x1a%temporal/api/failure/v1/message.proto\x1a'temporal/api/sdk/v1/user_metadata.proto\"\xed\t\n" +
 	"\x0eOperationState\x12Z\n" +
 	"\x06status\x18\x01 \x01(\x0e2B.temporal.server.chasm.lib.nexusoperation.proto.v1.OperationStatusR\x06status\x12\x1f\n" +
 	"\vendpoint_id\x18\x02 \x01(\tR\n" +
@@ -873,8 +886,8 @@ const file_temporal_server_chasm_lib_nexusoperation_proto_v1_operation_proto_raw
 	"\x14last_attempt_failure\x18\x10 \x01(\v2 .temporal.api.failure.v1.FailureR\x12lastAttemptFailure\x12W\n" +
 	"\x1anext_attempt_schedule_time\x18\x11 \x01(\v2\x1a.google.protobuf.TimestampR\x17nextAttemptScheduleTime\x12'\n" +
 	"\x0foperation_token\x18\x12 \x01(\tR\x0eoperationToken\x12x\n" +
-	"\x0fterminate_state\x18\x13 \x01(\v2O.temporal.server.chasm.lib.nexusoperation.proto.v1.NexusOperationTerminateStateR\x0eterminateState\x122\n" +
-	"\x05links\x18\x14 \x03(\v2\x1c.temporal.api.common.v1.LinkR\x05links\"=\n" +
+	"\x0fterminate_state\x18\x13 \x01(\v2O.temporal.server.chasm.lib.nexusoperation.proto.v1.NexusOperationTerminateStateR\x0eterminateState\x126\n" +
+	"\x05links\x18\x14 \x03(\v2\x1c.temporal.api.common.v1.LinkB\x02\x18\x01R\x05links\"=\n" +
 	"\x1cNexusOperationTerminateState\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\"\x82\x03\n" +
@@ -902,11 +915,11 @@ const file_temporal_server_chasm_lib_nexusoperation_proto_v1_operation_proto_raw
 	"request_id\x18\b \x01(\tR\trequestId\x12\x1a\n" +
 	"\bidentity\x18\t \x01(\tR\bidentity\x12\x16\n" +
 	"\x06reason\x18\n" +
-	" \x01(\tR\x06reason\"\xee\x02\n" +
+	" \x01(\tR\x06reason\"\xf2\x02\n" +
 	"\x14OperationRequestData\x125\n" +
 	"\x05input\x18\x01 \x01(\v2\x1f.temporal.api.common.v1.PayloadR\x05input\x12{\n" +
-	"\fnexus_header\x18\x02 \x03(\v2X.temporal.server.chasm.lib.nexusoperation.proto.v1.OperationRequestData.NexusHeaderEntryR\vnexusHeader\x12F\n" +
-	"\ruser_metadata\x18\x03 \x01(\v2!.temporal.api.sdk.v1.UserMetadataR\fuserMetadata\x12\x1a\n" +
+	"\fnexus_header\x18\x02 \x03(\v2X.temporal.server.chasm.lib.nexusoperation.proto.v1.OperationRequestData.NexusHeaderEntryR\vnexusHeader\x12J\n" +
+	"\ruser_metadata\x18\x03 \x01(\v2!.temporal.api.sdk.v1.UserMetadataB\x02\x18\x01R\fuserMetadata\x12\x1a\n" +
 	"\bidentity\x18\x04 \x01(\tR\bidentity\x1a>\n" +
 	"\x10NexusHeaderEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +

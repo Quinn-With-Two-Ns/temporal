@@ -56,8 +56,11 @@ message OperationState {
   string operation_token = 18;
   // Explicit terminate request state for standalone operations.
   NexusOperationTerminateState terminate_state = 19;
-  // Links are only populated for standalone operations. Workflow-backed operations derive links from history events.
-  repeated temporal.api.common.v1.Link links = 20;
+  // Deprecated: now stored on ChasmComponentAttributes.requests. Kept here as a
+  // dual-write target so a binary rolled back to pre-migration code (which only
+  // reads from this field) keeps showing links for operations created during
+  // the new-deploy window.
+  repeated temporal.api.common.v1.Link links = 20 [deprecated = true];
 }
 
 message NexusOperationTerminateState {
@@ -144,6 +147,10 @@ enum CancellationStatus {
 message OperationRequestData {
   temporal.api.common.v1.Payload input = 1;
   map<string, string> nexus_header = 2;
-  temporal.api.sdk.v1.UserMetadata user_metadata = 3;
+  // Deprecated: now stored on ChasmComponentAttributes.user_metadata. Kept here
+  // as a dual-write target so a binary rolled back to pre-migration code (which
+  // only reads from this field) keeps showing user metadata for operations
+  // created during the new-deploy window.
+  temporal.api.sdk.v1.UserMetadata user_metadata = 3 [deprecated = true];
   string identity = 4;
 }

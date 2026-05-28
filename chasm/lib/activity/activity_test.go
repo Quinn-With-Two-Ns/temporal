@@ -7,7 +7,9 @@ import (
 
 	"github.com/stretchr/testify/require"
 	commonpb "go.temporal.io/api/common/v1"
+	sdkpb "go.temporal.io/api/sdk/v1"
 	taskqueuepb "go.temporal.io/api/taskqueue/v1"
+	"go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/server/api/historyservice/v1"
 	"go.temporal.io/server/chasm"
 	"go.temporal.io/server/chasm/lib/activity/gen/activitypb/v1"
@@ -304,4 +306,141 @@ func TestContextMetadata(t *testing.T) {
 		md := activity.ContextMetadata(ctx)
 		require.Nil(t, md)
 	})
+}
+
+// TestNewStandaloneActivity_UserMetadataDualWrite verifies that user metadata
+// supplied on a StartActivityExecution request is persisted to BOTH the
+// framework-level ChasmComponentAttributes (the authoritative new location)
+// and the legacy ActivityRequestData.user_metadata field. The dual-write is
+// load-bearing for rollback safety: a binary rolled back to pre-migration code
+// only knows how to read the legacy field, so dropping it would silently empty
+// the user metadata on Describe for any activity created during the new-deploy
+// window.
+func TestNewStandaloneActivity_UserMetadataDualWrite(t *testing.T) {
+	md := &sdkpb.UserMetadata{
+		Summary: &commonpb.Payload{Data: []byte("summary-blob")},
+		Details: &commonpb.Payload{Data: []byte("details-blob")},
+	}
+
+	ctx := &chasm.MockMutableContext{
+		MockContext: chasm.MockContext{
+			HandleNow: func(chasm.Component) time.Time { return time.Unix(0, 0) },
+			HandleExecutionKey: func() chasm.ExecutionKey {
+				return chasm.ExecutionKey{NamespaceID: "ns", BusinessID: "act", RunID: "run"}
+			},
+		},
+	}
+
+	activity, err := NewStandaloneActivity(ctx, &workflowservice.StartActivityExecutionRequest{
+		Namespace:    "ns",
+		ActivityId:   "act",
+		ActivityType: &commonpb.ActivityType{Name: "T"},
+		TaskQueue:    &taskqueuepb.TaskQueue{Name: "Q"},
+		RequestId:    "req-id",
+		UserMetadata: md,
+	})
+	require.NoError(t, err)
+
+	// New location: SetUserMetadata recorded against the activity.
+	require.Contains(t, ctx.UserMetadataByComponent, chasm.Component(activity))
+	require.Same(t, md, ctx.UserMetadataByComponent[activity])
+
+	// Legacy location: ActivityRequestData also carries it so rolled-back code
+	// can still surface user metadata via the old field.
+	require.Same(t, md, activity.RequestData.Get(ctx).GetUserMetadata()) //nolint:staticcheck // exercising legacy field
+}
+
+// TestEffectiveUserMetadata_PrefersFrameworkLocation ensures the helper used by
+// readers (Describe, etc.) returns the framework-level user metadata when both
+// the new and legacy locations are populated.
+func TestEffectiveUserMetadata_PrefersFrameworkLocation(t *testing.T) {
+	frameworkMD := &sdkpb.UserMetadata{Summary: &commonpb.Payload{Data: []byte("new")}}
+	legacyMD := &sdkpb.UserMetadata{Summary: &commonpb.Payload{Data: []byte("legacy")}}
+
+	ctx := &chasm.MockMutableContext{
+		MockContext: chasm.MockContext{
+			HandleUserMetadata: func(chasm.Component) *sdkpb.UserMetadata {
+				return frameworkMD
+			},
+		},
+	}
+	activity := &Activity{
+		ActivityState: &activitypb.ActivityState{},
+		RequestData: chasm.NewDataField(ctx, &activitypb.ActivityRequestData{
+			UserMetadata: legacyMD, //nolint:staticcheck // exercising legacy field
+		}),
+	}
+
+	got := activity.effectiveUserMetadata(ctx)
+	require.Same(t, frameworkMD, got)
+}
+
+// TestAttachLinks_MergesPerRequestEntry verifies that two successive
+// attachLinks calls with the same requestID extend the per-request entry
+// rather than overwriting it. This catches the regression where the call
+// wrote only the newly-deduped subset (toAdd) under the requestID and
+// silently dropped any links previously written under the same key.
+func TestAttachLinks_MergesPerRequestEntry(t *testing.T) {
+	linkA := &commonpb.Link{Variant: &commonpb.Link_WorkflowEvent_{
+		WorkflowEvent: &commonpb.Link_WorkflowEvent{Namespace: "ns", WorkflowId: "a", RunId: "run"},
+	}}
+	linkB := &commonpb.Link{Variant: &commonpb.Link_WorkflowEvent_{
+		WorkflowEvent: &commonpb.Link_WorkflowEvent{Namespace: "ns", WorkflowId: "b", RunId: "run"},
+	}}
+
+	// HandleLinks returns the union across all requests; HandleRequestLinks returns
+	// just the prior entry for the given requestID. The test drives two appends and
+	// asserts the entry is merged, not overwritten.
+	stored := map[string][]*commonpb.Link{}
+	ctx := &chasm.MockMutableContext{
+		MockContext: chasm.MockContext{
+			HandleLinks: func(chasm.Component) []*commonpb.Link {
+				var all []*commonpb.Link
+				for _, ls := range stored {
+					all = append(all, ls...)
+				}
+				return all
+			},
+			HandleRequestLinks: func(_ chasm.Component, reqID string) ([]*commonpb.Link, error) {
+				return stored[reqID], nil
+			},
+		},
+	}
+	validator := newLinkValidator(
+		func(string) int { return 100 },
+		func(string) int { return 100 },
+		func(string) int { return 4000 },
+	)
+	activity := &Activity{
+		ActivityState: &activitypb.ActivityState{Status: activitypb.ACTIVITY_EXECUTION_STATUS_SCHEDULED},
+	}
+
+	require.NoError(t, activity.attachLinks(ctx, []*commonpb.Link{linkA}, "req-id", validator, "ns"))
+	stored["req-id"] = ctx.LinksByRequest[activity]["req-id"]
+
+	require.NoError(t, activity.attachLinks(ctx, []*commonpb.Link{linkB}, "req-id", validator, "ns"))
+
+	got := ctx.LinksByRequest[activity]["req-id"]
+	require.Len(t, got, 2)
+	require.Same(t, linkA, got[0])
+	require.Same(t, linkB, got[1])
+}
+
+// TestEffectiveUserMetadata_FallsBackToLegacy ensures that activities persisted
+// before the migration (no ChasmComponentAttributes.user_metadata; only the
+// legacy ActivityRequestData.user_metadata is populated) still surface their
+// user metadata to readers.
+func TestEffectiveUserMetadata_FallsBackToLegacy(t *testing.T) {
+	legacyMD := &sdkpb.UserMetadata{Summary: &commonpb.Payload{Data: []byte("legacy")}}
+
+	ctx := &chasm.MockMutableContext{} // HandleUserMetadata nil → returns nil, mimicking absent new field.
+	activity := &Activity{
+		ActivityState: &activitypb.ActivityState{},
+		RequestData: chasm.NewDataField(ctx, &activitypb.ActivityRequestData{
+			UserMetadata: legacyMD, //nolint:staticcheck // exercising legacy field
+		}),
+	}
+
+	got := activity.effectiveUserMetadata(ctx)
+	require.Same(t, legacyMD, got)
 }

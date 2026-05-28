@@ -11,6 +11,7 @@ import (
 	enumspb "go.temporal.io/api/enums/v1"
 	failurepb "go.temporal.io/api/failure/v1"
 	nexuspb "go.temporal.io/api/nexus/v1"
+	sdkpb "go.temporal.io/api/sdk/v1"
 	"go.temporal.io/api/serviceerror"
 	"go.temporal.io/api/workflowservice/v1"
 	persistencespb "go.temporal.io/server/api/persistence/v1"
@@ -122,16 +123,26 @@ func newStandaloneOperation(
 		RequestId:              uuid.NewString(),
 	})
 	op.RequestData = chasm.NewDataField(ctx, &nexusoperationpb.OperationRequestData{
-		Input:        frontendReq.GetInput(),
-		NexusHeader:  frontendReq.GetNexusHeader(),
-		UserMetadata: frontendReq.GetUserMetadata(),
-		Identity:     frontendReq.GetIdentity(),
+		Input:       frontendReq.GetInput(),
+		NexusHeader: frontendReq.GetNexusHeader(),
+		Identity:    frontendReq.GetIdentity(),
+		// Dual-write user_metadata to the legacy OperationRequestData field so a
+		// rolled-back binary (which only reads from here) keeps showing it. The
+		// authoritative copy lives on ChasmComponentAttributes.user_metadata;
+		// this field will be dropped once a rollback to pre-migration code is
+		// no longer supported.
+		UserMetadata: frontendReq.GetUserMetadata(), //nolint:staticcheck // intentional dual-write for rollback safety
 	})
 	op.Visibility = chasm.NewComponentField(ctx, chasm.NewVisibilityWithData(
 		ctx,
 		frontendReq.GetSearchAttributes().GetIndexedFields(),
 		nil,
 	))
+	if md := frontendReq.GetUserMetadata(); md != nil {
+		if err := ctx.SetUserMetadata(op, md); err != nil {
+			return nil, err
+		}
+	}
 	if err := TransitionScheduled.Apply(op, ctx, EventScheduled{}); err != nil {
 		return nil, err
 	}
@@ -203,7 +214,9 @@ func (o *Operation) onStarted(ctx chasm.MutableContext, operationToken string, s
 	if store, ok := o.Store.TryGet(ctx); ok {
 		return store.OnNexusOperationStarted(ctx, o, operationToken, startTime, links)
 	}
-	o.Links = append(o.Links, links...)
+	if err := o.appendLinks(ctx, links); err != nil {
+		return err
+	}
 	return TransitionStarted.Apply(o, ctx, EventStarted{
 		OperationToken: operationToken,
 		StartTime:      startTime,
@@ -215,8 +228,86 @@ func (o *Operation) onCompleted(ctx chasm.MutableContext, result *commonpb.Paylo
 	if store, ok := o.Store.TryGet(ctx); ok {
 		return store.OnNexusOperationCompleted(ctx, o, result, links)
 	}
-	o.Links = append(o.Links, links...)
+	if err := o.appendLinks(ctx, links); err != nil {
+		return err
+	}
 	return TransitionSucceeded.Apply(o, ctx, EventSucceeded{Result: result})
+}
+
+// effectiveLinks returns the operation's links, preferring the framework-level
+// ChasmComponentAttributes.requests and falling back to the legacy
+// OperationState.links for operations persisted before the migration. The
+// legacy fallback is returned as a defensive copy so callers writing the
+// returned slice into a response proto cannot mutate persisted state.
+func (o *Operation) effectiveLinks(ctx chasm.Context) []*commonpb.Link {
+	if links := ctx.Links(o); len(links) > 0 {
+		return links
+	}
+	legacy := o.Links //nolint:staticcheck // deprecated, read-only fallback
+	if len(legacy) == 0 {
+		return nil
+	}
+	return append([]*commonpb.Link(nil), legacy...)
+}
+
+// effectiveUserMetadata returns the operation's user metadata, preferring the
+// framework-level ChasmComponentAttributes.user_metadata and falling back to
+// the legacy OperationRequestData.user_metadata.
+func (o *Operation) effectiveUserMetadata(ctx chasm.Context) *sdkpb.UserMetadata {
+	if md := ctx.UserMetadata(o); md != nil {
+		return md
+	}
+	return o.RequestData.Get(ctx).GetUserMetadata() //nolint:staticcheck // deprecated, read-only fallback
+}
+
+// appendLinks accumulates links onto the standalone operation's framework-level
+// metadata, keyed by the operation's request ID. Successive calls merge into
+// the same per-request entry (rather than collapsing all other entries under
+// this key). The links are also dual-written to the legacy OperationState.Links
+// field so a rolled-back binary (which only reads from here) keeps surfacing
+// them. The per-execution cap (dynamicconfig.MaxLinksPerExecution) is enforced
+// across all accumulated links; if the OperationContext is not registered the
+// call fails rather than silently skipping the cap.
+func (o *Operation) appendLinks(ctx chasm.MutableContext, links []*commonpb.Link) error {
+	if len(links) == 0 {
+		return nil
+	}
+	opCtx, ok := ctx.Value(OperationContextKey).(*OperationContext)
+	if !ok || opCtx == nil || opCtx.MaxLinksPerExecution == nil || opCtx.LinkMaxSize == nil {
+		return softassert.UnexpectedInternalErr(
+			ctx.Logger(),
+			"nexusoperation: OperationContext.MaxLinksPerExecution/LinkMaxSize missing from chasm context",
+			fmt.Errorf("cannot enforce link limits for operation %s", o.GetRequestId()),
+		)
+	}
+	ns := ctx.NamespaceEntry().Name().String()
+	maxSize := opCtx.LinkMaxSize(ns)
+	for _, l := range links {
+		if l.Size() > maxSize {
+			return serviceerror.NewInvalidArgumentf("link exceeds allowed size of %d, got %d", maxSize, l.Size())
+		}
+	}
+	existing := ctx.Links(o)
+	maxLinks := opCtx.MaxLinksPerExecution(ns)
+	if len(existing)+len(links) > maxLinks {
+		return serviceerror.NewFailedPreconditionf(
+			"cannot attach more than %d links to a Nexus operation (%d links already attached)",
+			maxLinks,
+			len(existing),
+		)
+	}
+	priorForRequest, err := ctx.RequestLinks(o, o.GetRequestId())
+	if err != nil {
+		return err
+	}
+	merged := make([]*commonpb.Link, 0, len(priorForRequest)+len(links))
+	merged = append(merged, priorForRequest...)
+	merged = append(merged, links...)
+	if err := ctx.SetRequestLinks(o, o.GetRequestId(), merged); err != nil {
+		return err
+	}
+	o.Links = append(o.Links, links...) //nolint:staticcheck // intentional dual-write for rollback safety
+	return nil
 }
 
 // onFailed applies the failed transition or delegates to the store if one is present.
@@ -345,7 +436,7 @@ func (o *Operation) saveInvocationResult(
 ) (chasm.NoValue, error) {
 	switch r := input.result.(type) {
 	case invocationResultOK:
-		links := convertResponseLinks(r.response.Links, ctx.Logger())
+		links := commonnexus.ConvertNexusLinksToProtoLinks(r.response.Links, ctx.Logger())
 		if r.response.Pending != nil {
 			// An async operation transitions to STARTED here;
 			// HandleNexusCompletion will apply its outcome from the completion callback.
@@ -520,6 +611,8 @@ func (o *Operation) isClosed() bool {
 func (o *Operation) buildExecutionInfo(ctx chasm.Context) *nexuspb.NexusOperationExecutionInfo {
 	requestData := o.RequestData.Get(ctx)
 	key := ctx.ExecutionKey()
+	links := o.effectiveLinks(ctx)
+	userMetadata := o.effectiveUserMetadata(ctx)
 	info := &nexuspb.NexusOperationExecutionInfo{
 		OperationId:             key.BusinessID,
 		RunId:                   key.RunID,
@@ -544,8 +637,8 @@ func (o *Operation) buildExecutionInfo(ctx chasm.Context) *nexuspb.NexusOperatio
 			IndexedFields: o.Visibility.Get(ctx).CustomSearchAttributes(ctx),
 		},
 		NexusHeader:  requestData.GetNexusHeader(),
-		UserMetadata: requestData.GetUserMetadata(),
-		Links:        o.Links,
+		UserMetadata: userMetadata,
+		Links:        links,
 		Identity:     requestData.GetIdentity(),
 	}
 
